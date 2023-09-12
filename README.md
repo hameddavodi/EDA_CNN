@@ -1,6 +1,4 @@
-# EDA_CNN
+# Introduction
 
-hello world
-```
-import from
-```
+Welcome to this dedicated repository for our Machine Learning project, focusing on Image Classification using Convolutional Neural Networks (CNNs). 
+Our primary objective is to explore and implement advanced CNN architectures, comparing their performance on a common dataset.
