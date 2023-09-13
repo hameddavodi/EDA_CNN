@@ -300,9 +300,13 @@ plot_model(PolyNet, to_file='PolyNet.png', show_shapes=True, show_layer_names=Tr
 
 
 
+import numpy as np
+from sklearn.model_selection import KFold
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
 
 
-def cv_5(model, X, y, n_splits=5, epochs=1):
+def cv_5(model, X, y, epochs, n_splits=5):
     
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     train_losses = []
@@ -314,7 +318,6 @@ def cv_5(model, X, y, n_splits=5, epochs=1):
     precisions = []
     recalls = []
     f1_scores = []
-    confusion_matrices = []
 
     for train_index, test_index in kf.split(X):
         X_train, X_test = X[train_index], X[test_index]
@@ -324,25 +327,24 @@ def cv_5(model, X, y, n_splits=5, epochs=1):
         train_loss = []
         val_loss = []
 
-        history = model.fit(X_train, y_train, validation_split=0.2, epochs=1, verbose=0)
+        history = model.fit(X_train, y_train, validation_split=0.2, epochs=epochs, verbose=1)
 
         # Append training and validation loss for this epoch
-        train_loss.append(history.history['loss'][0])
-        val_loss.append(history.history['val_loss'][0])
+        train_loss.extend(history.history['loss'])
+        val_loss.extend(history.history['val_loss'])
 
         # Predict on the test data
         y_pred = model.predict(X_test)
 
         # Calculate zero-one loss
         zero_one_loss = 1 - accuracy_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1))
-
         # Calculate other metrics using y_pred and y_test
         precision = precision_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
         recall = recall_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
         f1 = f1_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
-        cm = confusion_matrix(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1))
-        train_losses.append(history.history['loss'])
-        val_losses.append(history.history['val_loss'])
+
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
         train_accuracies.append(history.history['accuracy'])
         val_accuracies.append(history.history['val_accuracy'])
         # Evaluate the model on the test set for this fold
@@ -355,59 +357,64 @@ def cv_5(model, X, y, n_splits=5, epochs=1):
         precisions.append(precision)
         recalls.append(recall)
         f1_scores.append(f1)
-        confusion_matrices.append(cm)
 
     # Calculate average metrics over all folds
     avg_accuracy = np.mean(accuracies)
     avg_precision = np.mean(precisions)
     avg_recall = np.mean(recalls)
     avg_f1 = np.mean(f1_scores)
-    
+
     # Calculate the mean and standard deviation of loss and accuracy across folds
     mean_train_loss = np.mean(train_losses, axis=0)
     std_train_loss = np.std(train_losses, axis=0)
     mean_val_loss = np.mean(val_losses, axis=0)
     std_val_loss = np.std(val_losses, axis=0)
-    
+
     mean_train_accuracy = np.mean(train_accuracies, axis=0)
     std_train_accuracy = np.std(train_accuracies, axis=0)
     mean_val_accuracy = np.mean(val_accuracies, axis=0)
     std_val_accuracy = np.std(val_accuracies, axis=0)
 
+    # Define a function for moving average
+    def moving_average(data, window_size):
+        return np.convolve(data, np.ones(window_size)/window_size, mode='same')
+
+    # Smoothing window size (adjust as needed)
+    window_size = 5
+
     # Plotting the training and validation loss
     plt.figure(figsize=(12, 5))
+
+    # Subplot for training and validation loss
     plt.subplot(1, 2, 1)
-    plt.plot(range(1, epochs + 1), mean_train_loss, label='Training Loss', color='blue')
-    plt.fill_between(range(1, epochs + 1), mean_train_loss - std_train_loss, mean_train_loss + std_train_loss, color='blue', alpha=0.2)
-    plt.plot(range(1, epochs + 1), mean_val_loss, label='Validation Loss', color='red')
-    plt.fill_between(range(1, epochs + 1), mean_val_loss - std_val_loss, mean_val_loss + std_val_loss, color='red', alpha=0.2)
+
+    # Smoothing the training and validation loss curves
+    smoothed_train_loss = moving_average(mean_train_loss, window_size)
+    smoothed_val_loss = moving_average(mean_val_loss, window_size)
+
+    # Create epochs_range based on the length of smoothed_val_loss
+    epochs_range = range(1, len(smoothed_val_loss) + 1)
+
+    # Plotting smoothed validation loss and its confidence interval
+    plt.plot(epochs_range, smoothed_val_loss, label='Validation Loss', color='red')
+    plt.fill_between(epochs_range, smoothed_val_loss - std_val_loss, smoothed_val_loss + std_val_loss, color='red', alpha=0.2)
+
+    # Plotting smoothed training loss and its confidence interval
+    plt.plot(epochs_range, smoothed_train_loss, label='Training Loss', color='blue')
+    plt.fill_between(epochs_range, smoothed_train_loss - std_train_loss, smoothed_train_loss + std_train_loss, color='blue', alpha=0.2)
+
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.title('Training and Validation Loss')
     plt.legend()
 
-    # Plotting the training and validation accuracy
-    plt.subplot(1, 2, 2)
-    plt.plot(range(1, epochs + 1), mean_train_accuracy, label='Training Accuracy', color='blue')
-    plt.fill_between(range(1, epochs + 1), mean_train_accuracy - std_train_accuracy, mean_train_accuracy + std_train_accuracy, color='blue', alpha=0.2)
-    plt.plot(range(1, epochs + 1), mean_val_accuracy, label='Validation Accuracy', color='red')
-    plt.fill_between(range(1, epochs + 1), mean_val_accuracy - std_val_accuracy, mean_val_accuracy + std_val_accuracy, color='red', alpha=0.2)
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.title('Training and Validation Accuracy')
-    plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-    
-    
     return {
         "Average Accuracy": avg_accuracy,
         "Average Precision": avg_precision,
         "Average Recall": avg_recall,
         "Average F1 Score": avg_f1,
-        "Confusion Matrices": confusion_matrices
     }
+
 
 
 
