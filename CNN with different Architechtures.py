@@ -64,8 +64,8 @@ def load_and_preprocess_images(folder_path):
     return np.array(images), np.array(labels)
 
 # Define the desired width and height for the images
-desired_width = 224
-desired_height = 224
+desired_width = 120
+desired_height = 120
 
 # Define paths for the train and test sets
 train_path = os.path.join(dataset_path, 'train')
