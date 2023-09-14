@@ -250,49 +250,43 @@ plot_model(SE_NET, to_file='SE_NET.png', show_shapes=True, show_layer_names=True
 
 
 
+# The (simplified) PolyNet CNN
+def simplified_poly_net(input_shape, num_classes):
+    input_layer = Input(shape=(desired_width, desired_height, 3))
+    x = input_layer
 
-# Input tensor
-input_tensor = Input(shape=(desired_width, desired_height, 3))
+    # Convolution Blocks
+    for filters, repetitions in [(64, 2), (128, 4), (256, 6)]:
+        for _ in range(repetitions):
+            x = Conv2D(filters, (3, 3), padding='same')(x)
+            x = BatchNormalization()(x)
+            x = Activation('relu')(x)
+        x = MaxPooling2D((2, 2))(x)
 
-# Initial convolution layer
-x = Conv2D(64, (7, 7), strides=(2, 2), padding='same', activation='relu')(input_tensor)
+    # Global Average Pooling Layer
+    x = tf.reduce_mean(x, axis=[1, 2])  # Global average pooling
 
-# PolyNet inception blocks
-def polynet_inception_block(x, num_filters):
-    branch1x1 = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(x)
-    
-    branch3x3 = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(x)
-    branch3x3 = Conv2D(num_filters, (3, 3), padding='same', activation='relu')(branch3x3)
-    
-    branch3x3stack = Conv2D(num_filters, (1, 1), padding='same', activation='relu')(x)
-    branch3x3stack = Conv2D(num_filters, (3, 3), padding='same', activation='relu')(branch3x3stack)
-    branch3x3stack = Conv2D(num_filters, (3, 3), padding='same', activation='relu')(branch3x3stack)
-    
-    # Concatenate the outputs of the branches
-    x = concatenate([branch1x1, branch3x3, branch3x3stack], axis=-1)
-    return x
+    # Fully Connected Layers
+    x = Dense(512, activation='relu')(x)
 
-# Apply PolyNet inception blocks
-for _ in range(3):  # You can adjust the number of blocks
-    x = polynet_inception_block(x, 64)
+    # Output Layer
+    output_layer = Dense(num_classes, activation='softmax')(x)
 
-# Global Average Pooling Layer
-x = GlobalAveragePooling2D()(x)
+    # Create the model
+    model = Model(inputs=input_layer, outputs=output_layer)
+    return model
 
-# Fully connected layers
-x = Dense(256, activation='relu')(x)
+# Example usage:
+input_shape = (desired_width, desired_height, 3)  # Replace with your input shape
+num_classes = 2  # Replace with the number of classes in your task
 
-# Output layer for classification (adjust the number of classes as needed)
-output = Dense(num_classes, activation='softmax')(x)
-
-# Create the PolyNet-like model
-PolyNet = Model(inputs=input_tensor, outputs=output)
+PolyNet = simplified_poly_net(input_shape, num_classes)
 
 # Compile the model
-PolyNet.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+PolyNet.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-# Print model summary
 PolyNet.summary()
+
 # Plot the model's structure and save it as an image
 plot_model(PolyNet, to_file='PolyNet.png', show_shapes=True, show_layer_names=True)
 
@@ -300,122 +294,66 @@ plot_model(PolyNet, to_file='PolyNet.png', show_shapes=True, show_layer_names=Tr
 
 
 
-import numpy as np
-from sklearn.model_selection import KFold
-from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
-import matplotlib.pyplot as plt
 
+# Customized Function to Perform 5-fold CV with batch size of 128.
+import numpy as np
+import tensorflow as tf
+from sklearn.model_selection import KFold
+from sklearn.metrics import zero_one_loss, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import warnings
 
 def cv_5(model, X, y, epochs, n_splits=5):
-    
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    train_losses = []
-    val_losses = []
-    train_accuracies = []
-    val_accuracies = []
-
     accuracies = []
-    precisions = []
-    recalls = []
-    f1_scores = []
+    all_confusion_matrices = []  # To store confusion matrices for each fold
 
     for train_index, test_index in kf.split(X):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y[train_index], y[test_index]
 
-        # Initialize lists to store training and validation loss for each epoch
-        train_loss = []
-        val_loss = []
-
-        history = model.fit(X_train, y_train, validation_split=0.2, epochs=epochs, verbose=1)
-
-        # Append training and validation loss for this epoch
-        train_loss.extend(history.history['loss'])
-        val_loss.extend(history.history['val_loss'])
+        history = model.fit(
+            tf.constant(X_train),
+            y_train,  
+            validation_data=(tf.constant(X_test), y_test),
+            batch_size=128,
+            epochs=epochs,
+            verbose=1
+        )
 
         # Predict on the test data
-        y_pred = model.predict(X_test)
+        y_pred = model.predict(tf.constant(X_test))
 
         # Calculate zero-one loss
-        zero_one_loss = 1 - accuracy_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1))
-        # Calculate other metrics using y_pred and y_test
-        precision = precision_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
-        recall = recall_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
-        f1 = f1_score(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1), average='weighted')
+        zero_one = 1 - zero_one_loss(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1))
+        accuracies.append(zero_one)
 
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
-        train_accuracies.append(history.history['accuracy'])
-        val_accuracies.append(history.history['val_accuracy'])
-        # Evaluate the model on the test set for this fold
-        _, test_accuracy = model.evaluate(X_test, y_test)
-
-        # Calculate the zero-one loss (misclassification error) for this fold
-        zero_one_loss = 1.0 - test_accuracy
-
-        accuracies.append(1 - zero_one_loss)
-        precisions.append(precision)
-        recalls.append(recall)
-        f1_scores.append(f1)
+        # Calculate confusion matrix
+        cm = confusion_matrix(np.argmax(y_test, axis=1), np.argmax(y_pred, axis=1))
+        all_confusion_matrices.append(cm)
 
     # Calculate average metrics over all folds
     avg_accuracy = np.mean(accuracies)
-    avg_precision = np.mean(precisions)
-    avg_recall = np.mean(recalls)
-    avg_f1 = np.mean(f1_scores)
 
-    # Calculate the mean and standard deviation of loss and accuracy across folds
-    mean_train_loss = np.mean(train_losses, axis=0)
-    std_train_loss = np.std(train_losses, axis=0)
-    mean_val_loss = np.mean(val_losses, axis=0)
-    std_val_loss = np.std(val_losses, axis=0)
+    # Calculate the average confusion matrix
+    avg_confusion_matrix = np.mean(all_confusion_matrices, axis=0)
+    avg_metrics = {"Average Accuracy": avg_accuracy, "Average Confusion Matrix": avg_confusion_matrix}
 
-    mean_train_accuracy = np.mean(train_accuracies, axis=0)
-    std_train_accuracy = np.std(train_accuracies, axis=0)
-    mean_val_accuracy = np.mean(val_accuracies, axis=0)
-    std_val_accuracy = np.std(val_accuracies, axis=0)
+    # Plot the average confusion matrix
+    sns.heatmap(avg_metrics["Average Confusion Matrix"], annot=True, cmap="Blues")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
+    plt.title("Average Confusion Matrix")
+    plt.show()
+    
+    return {"Average Accuracy": avg_accuracy, "Average Confusion Matrix": avg_confusion_matrix}
 
-    # Define a function for moving average
-    def moving_average(data, window_size):
-        return np.convolve(data, np.ones(window_size)/window_size, mode='same')
-
-    # Smoothing window size (adjust as needed)
-    window_size = 5
-
-    # Plotting the training and validation loss
-    plt.figure(figsize=(12, 5))
-
-    # Subplot for training and validation loss
-    plt.subplot(1, 2, 1)
-
-    # Smoothing the training and validation loss curves
-    smoothed_train_loss = moving_average(mean_train_loss, window_size)
-    smoothed_val_loss = moving_average(mean_val_loss, window_size)
-
-    # Create epochs_range based on the length of smoothed_val_loss
-    epochs_range = range(1, len(smoothed_val_loss) + 1)
-
-    # Plotting smoothed validation loss and its confidence interval
-    plt.plot(epochs_range, smoothed_val_loss, label='Validation Loss', color='red')
-    plt.fill_between(epochs_range, smoothed_val_loss - std_val_loss, smoothed_val_loss + std_val_loss, color='red', alpha=0.2)
-
-    # Plotting smoothed training loss and its confidence interval
-    plt.plot(epochs_range, smoothed_train_loss, label='Training Loss', color='blue')
-    plt.fill_between(epochs_range, smoothed_train_loss - std_train_loss, smoothed_train_loss + std_train_loss, color='blue', alpha=0.2)
-
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
-    plt.legend()
-
-    return {
-        "Average Accuracy": avg_accuracy,
-        "Average Precision": avg_precision,
-        "Average Recall": avg_recall,
-        "Average F1 Score": avg_f1,
-    }
-
-
-
+# Of course there is a wide range of approaches to determine the optimum number of Epochs but I used trial and error :)
+cv_5(PolyNet, train_images, train_labels_one_hot, epochs=5)
+cv_5(SE_NET, train_images, train_labels_one_hot, epochs=5)
+cv_5(Sequential_CNN, train_images, train_labels_one_hot, epochs=5)
+cv_5(Efficient_NetB0, train_images, train_labels_one_hot, epochs=5)
+cv_5(AlexNet, train_images, train_labels_one_hot, epochs=5)
 
 
